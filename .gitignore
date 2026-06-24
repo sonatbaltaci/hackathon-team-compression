@@ -13,6 +13,7 @@ wheels/
 uv.lock
 
 # Data and logs
+credentials.json
 electricity_maps_key.txt
 data/*
 logs/*
