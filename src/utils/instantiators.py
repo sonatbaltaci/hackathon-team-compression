@@ -1,11 +1,11 @@
+import contextlib
 from typing import List
 
 import hydra
+from codecarbon import EmissionsTracker
 from lightning import Callback
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
-from codecarbon import EmissionsTracker
-import contextlib
 
 from src.utils import pylogger
 
@@ -57,13 +57,16 @@ def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
 
     return logger
 
-def instantiate_emissions_tracker(cfg: DictConfig) -> EmissionsTracker:
+
+def instantiate_emissions_tracker(cfg: DictConfig):
     if not cfg.codecarbon:
         log.warning("No CodeCarbon config found! Skipping...")
         return contextlib.nullcontext()
-    
+
     with open(cfg.paths.electricity_maps_key) as f:
         electricitymaps_api_key = f.read().strip()
-    tracker: EmissionsTracker = hydra.utils.instantiate(cfg.codecarbon,
-                                        electricitymaps_api_token=electricitymaps_api_key)
+    tracker: EmissionsTracker = hydra.utils.instantiate(
+        cfg.codecarbon, electricitymaps_api_token=electricitymaps_api_key
+    )
+
     return tracker

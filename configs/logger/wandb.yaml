@@ -4,8 +4,9 @@ wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
   name: ${experiment_name}
   group: ${team_name}
+  entity: "imaginelab" 
   tags: ${tags}
-  save_dir: "${paths.output_dir}"
+  save_dir: ${paths.output_dir}
   offline: False
   id: null # pass correct id to resume experiment!
   project: "imagine-hackathon-2026"

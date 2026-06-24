@@ -22,4 +22,6 @@ work_dir: ${hydra:runtime.cwd}
 
 # path to codecarbon directory
 codecarbon_dir: ${paths.root_dir}/codecarbon/
-electricity_maps_key: ${paths.codecarbon_dir}electricity_maps_key.txt
+
+# path to electricity maps API key
+electricity_maps_key: ${paths.root_dir}/electricity_maps_key.txt

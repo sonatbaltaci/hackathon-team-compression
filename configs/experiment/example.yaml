@@ -14,8 +14,11 @@ seed: 42
 trainer:
   precision: 32
 
-model:
+module:
   compile: false
 
-experiment_name: "TODO"
-tags: ["explore", "train"] # TODO change if needed
+# Remember to define experiment_name and tags in all your experiments!
+# First tag options: data, explore, baseline, ablate, hyperparam, final, <custom tag>
+# Second tag options: train, pre-train, post-train, debug, <custom tag>
+experiment_name: "example"
+tags: ["explore", "train"]

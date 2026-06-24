@@ -1,6 +1,0 @@
-defaults:
-  - default
-
-test_dir: null
-train_dir: "train"
-val_dir: "val"

@@ -1,15 +1,14 @@
+import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import torch
-import os
-from pathlib import Path
-from torchvision.io import read_image, ImageReadMode
+import torchvision.transforms.v2 as T
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.dataloader import default_collate
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.folder import IMG_EXTENSIONS, default_loader
-import torchvision.transforms.v2 as T
 
 
 class UnlabeledImageFolder:
@@ -33,6 +32,7 @@ class UnlabeledImageFolder:
         if self.transform:
             img = self.transform(img)
         return img
+
 
 class ImageNetDataModule(LightningDataModule):
     """`LightningDataModule` for the ImageNet dataset.
@@ -81,7 +81,7 @@ class ImageNetDataModule(LightningDataModule):
         eval_resize_size: int = 256,
         eval_crop_size: int = 224,
         train_crop_size: int = 224,
-        interpolation: str = 'bilinear',
+        interpolation: str = "bilinear",
         hflip_prob: float = 0.0,
         auto_augment_policy: str = None,
         ra_magnitude: int = None,
@@ -121,27 +121,34 @@ class ImageNetDataModule(LightningDataModule):
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
-        
+
         # data transformations
         interpolation_mode = T.InterpolationMode(interpolation)
         imagenet_mean = (0.485, 0.456, 0.406)
         imagenet_std = (0.229, 0.224, 0.225)
         train_transforms = []
-        train_transforms.append(T.RandomResizedCrop(train_crop_size,
-                                                    interpolation=interpolation_mode))
+        train_transforms.append(
+            T.RandomResizedCrop(train_crop_size, interpolation=interpolation_mode)
+        )
         if hflip_prob > 0:
             train_transforms.append(T.RandomHorizontalFlip(hflip_prob))
 
         if auto_augment_policy is not None:
             if auto_augment_policy == "ra":
-                train_transforms.append(T.RandAugment(interpolation=interpolation_mode, magnitude=ra_magnitude))
+                train_transforms.append(
+                    T.RandAugment(interpolation=interpolation_mode, magnitude=ra_magnitude)
+                )
             elif auto_augment_policy == "ta_wide":
                 train_transforms.append(T.TrivialAugmentWide(interpolation=interpolation_mode))
             elif auto_augment_policy == "augmix":
-                train_transforms.append(T.AugMix(interpolation=interpolation_mode, severity=augmix_severity))
+                train_transforms.append(
+                    T.AugMix(interpolation=interpolation_mode, severity=augmix_severity)
+                )
             else:
                 aa_policy = T.AutoAugmentPolicy(auto_augment_policy)
-                train_transforms.append(T.AutoAugment(policy=aa_policy, interpolation=interpolation_mode))
+                train_transforms.append(
+                    T.AutoAugment(policy=aa_policy, interpolation=interpolation_mode)
+                )
 
         train_transforms.extend(
             [
@@ -154,17 +161,18 @@ class ImageNetDataModule(LightningDataModule):
             train_transforms.append(T.RandomErasing(p=random_erase_prob))
         train_transforms.append(T.ToPureTensor())
         self.train_transforms = T.Compose(train_transforms)
-        
-        self.eval_transforms = T.Compose([
-            T.Resize(eval_resize_size, interpolation=interpolation_mode),
-            T.CenterCrop(eval_crop_size),
-            T.PILToTensor(),
-            T.ToDtype(torch.float, scale=True),
-            T.Normalize(mean=imagenet_mean, std=imagenet_std),
-            T.ToPureTensor()
-        ])
-        
-        
+
+        self.eval_transforms = T.Compose(
+            [
+                T.Resize(eval_resize_size, interpolation=interpolation_mode),
+                T.CenterCrop(eval_crop_size),
+                T.PILToTensor(),
+                T.ToDtype(torch.float, scale=True),
+                T.Normalize(mean=imagenet_mean, std=imagenet_std),
+                T.ToPureTensor(),
+            ]
+        )
+
         if cutmix_alpha or mixup_alpha:
             mixup_cutmix = self._get_mixup_cutmix(
                 mixup_alpha=mixup_alpha,
@@ -196,28 +204,7 @@ class ImageNetDataModule(LightningDataModule):
 
         Do not use it to assign state (self.x = y).
         """
-        if not self.hparams.test_dir:  # Train mode
-            if not self.data_train and not self.data_val:
-                # TODO download from Moravia?
-                
-                self.data_train = ImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.train_dir),
-                    transform=self.train_transforms
-                )
-                self.data_val = ImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.val_dir),
-                    transform=self.eval_transforms
-                )
-        else:  # Test mode
-            if not self.data_test:
-                self.data_test = UnlabeledImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.test_dir),
-                    transform=self.eval_transforms
-                )
-                # with open("ground_truth.txt", "w") as f:
-                #     for img_path, label in sorted(self.data_test.samples, key=lambda t: t[0].split(os.sep)[-1]):
-                #         file_name = img_path.split(os.sep)[-1]
-                #         f.write(f"{file_name} - {label}\n")
+        pass
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -229,8 +216,24 @@ class ImageNetDataModule(LightningDataModule):
 
         :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
         """
-        pass
+        if stage in ("test", "predict") or stage is None:
+            if not self.data_test:
+                self.data_test = UnlabeledImageFolder(
+                    os.path.join(self.hparams.data_path, self.hparams.test_dir),
+                    transform=self.eval_transforms,
+                )
+        if stage in ("fit", "validate") or stage is None:
+            if not self.data_train:
+                self.data_train = ImageFolder(
+                    os.path.join(self.hparams.data_path, self.hparams.train_dir),
+                    transform=self.train_transforms,
+                )
 
+            if not self.data_val:
+                self.data_val = ImageFolder(
+                    os.path.join(self.hparams.data_path, self.hparams.val_dir),
+                    transform=self.eval_transforms,
+                )
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
@@ -258,7 +261,7 @@ class ImageNetDataModule(LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             prefetch_factor=self.hparams.prefetch_factor,
-            shuffle=True,
+            shuffle=False,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:
@@ -274,7 +277,7 @@ class ImageNetDataModule(LightningDataModule):
             prefetch_factor=self.hparams.prefetch_factor,
             shuffle=False,
         )
-        
+
     def predict_dataloader(self) -> DataLoader[Any]:
         """Create and return the predict dataloader.
 
@@ -309,13 +312,9 @@ class ImageNetDataModule(LightningDataModule):
     def _get_mixup_cutmix(self, mixup_alpha, cutmix_alpha):
         mixup_cutmix = []
         if mixup_alpha > 0:
-            mixup_cutmix.append(
-                T.MixUp(alpha=mixup_alpha, num_classes=self.num_classes)
-            )
+            mixup_cutmix.append(T.MixUp(alpha=mixup_alpha, num_classes=self.num_classes))
         if cutmix_alpha > 0:
-            mixup_cutmix.append(
-                T.CutMix(alpha=cutmix_alpha, num_classes=self.num_classes)
-            )
+            mixup_cutmix.append(T.CutMix(alpha=cutmix_alpha, num_classes=self.num_classes))
         if not mixup_cutmix:
             return None
 

@@ -2,20 +2,20 @@
 
 defaults:
   - _self_
-  - datamodule: imagenet_test
+  - datamodule: default
   - module: vit_s_16
   - trainer: imagenet_vit_s_16
   - logger: null
   - callbacks: null
   - paths: default
   - extras: default
-  - hydra: hydra_eval
+  - hydra: eval
   - codecarbon: null
   - experiment: null
   - hparams_search: null
   - debug: null
 
-# experiment name, determines output directory path
+# TODO Write your team name
 team_name: "TODO"
 tags: ["baseline", "evaluate"]
 
@@ -28,11 +28,7 @@ trainer:
 module:
   compile: false
 
-# TODO Replace the placeholders with the checkpoints you want to test
-checkpoints:
-  - name: "experiment1"
-    date: "2026-06-21_10-20-40"
-    ckpt: "last.ckpt"
-  - name: "experiment2"
-    date: "2026-06-22_20-30-40"
-    ckpt: "epoch10.ckpt"
+# TODO Complete with the paths to the checkpoints you want to test
+checkpoints: [
+  "baseline/2026-06-23/16-24-34/checkpoints/last.ckpt",
+]

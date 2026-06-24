@@ -61,7 +61,7 @@ class ImageNetModule(LightningModule):
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
-        self.save_hyperparameters(logger=True, ignore=['net'])
+        self.save_hyperparameters(logger=True, ignore=["net"])
 
         self.net = net
 
@@ -138,10 +138,6 @@ class ImageNetModule(LightningModule):
         # return loss or backpropagation will fail
         return loss
 
-    def on_train_epoch_end(self) -> None:
-        "Lightning hook that is called when a training epoch ends."
-        pass
-
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single validation step on a batch of data from the validation set.
 
@@ -159,10 +155,6 @@ class ImageNetModule(LightningModule):
         self.log("val/acc1", self.val_acc1, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc5", self.val_acc5, on_step=False, on_epoch=True, prog_bar=True)
 
-    def on_validation_epoch_end(self) -> None:
-        "Lightning hook that is called when a validation epoch ends."
-        pass
-
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single test step on a batch of data from the test set.
 
@@ -170,17 +162,13 @@ class ImageNetModule(LightningModule):
             labels.
         :param batch_idx: The index of the current batch.
         """
-        loss, logits, targets = self.model_step(batch)
+        _, logits, targets = self.model_step(batch)
 
         # update and log metrics
         self.test_acc1(logits, targets)
         self.test_acc5(logits, targets)
         self.log("test/acc1", self.test_acc1, on_step=False, on_epoch=True, prog_bar=True)
         self.log("test/acc5", self.test_acc5, on_step=False, on_epoch=True, prog_bar=True)
-
-    def on_test_epoch_end(self) -> None:
-        """Lightning hook that is called when a test epoch ends."""
-        pass
 
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
@@ -210,7 +198,7 @@ class ImageNetModule(LightningModule):
             scheduler = torch.optim.lr_scheduler.SequentialLR(
                 optimizer,
                 schedulers=[warmup_scheduler, main_scheduler],
-                milestones=[self.hparams.warmup_steps]
+                milestones=[self.hparams.warmup_steps],
             )
         else:
             scheduler = main_scheduler

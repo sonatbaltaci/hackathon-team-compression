@@ -1,16 +1,15 @@
+import math
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import lightning as L
 import rootutils
 import torch
-import os
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping, EarlyStoppingReason
 from lightning.pytorch.loggers import Logger
-from lightning.pytorch.callbacks.early_stopping import EarlyStoppingReason, EarlyStopping
 from omegaconf import DictConfig
-from codecarbon import EmissionsTracker
-
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # ------------------------------------------------------------------------------------ #
@@ -35,8 +34,8 @@ from src.utils import (
     extras,
     get_metric_value,
     instantiate_callbacks,
-    instantiate_loggers,
     instantiate_emissions_tracker,
+    instantiate_loggers,
     log_hyperparameters,
     task_wrapper,
 )
@@ -44,12 +43,12 @@ from src.utils import (
 log = RankedLogger(__name__, rank_zero_only=True)
 
 # Uses TensorFloat32 or bfloat16 for matrix multiplication when available
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
+
 
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Trains the model. Can additionally evaluate on a testset, using best weights obtained during
-    training.
+    """Trains the model.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during
     failure. Useful for multiruns, saving info about the crash, etc.
@@ -64,21 +63,23 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info(f"Instantiating datamodule <{cfg.datamodule._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.datamodule)
 
-    if 'CosineAnnealingLR' in cfg.module['main_scheduler']['_target_']:
-        datamodule.prepare_data()
+    if "CosineAnnealingLR" in cfg.module["main_scheduler"]["_target_"]:
+        datamodule.setup(stage="fit")  # Load training set
         bsize = cfg.datamodule.batch_size
-        steps_per_epoch = (len(datamodule.data_train) + bsize - 1) / bsize  # Ceiling division
-        cfg.module.main_scheduler.T_max = cfg.trainer.max_epochs * steps_per_epoch - cfg.module.warmup_steps
-    
+        steps_per_epoch = math.ceil(len(datamodule.data_train) / bsize)
+        cfg.module.main_scheduler.T_max = (
+            cfg.trainer.max_epochs * steps_per_epoch - cfg.module.warmup_steps
+        )
+
     log.info(f"Instantiating module <{cfg.module._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.module)
-    
+
     log.info("Instantiating callbacks...")
     callbacks: List[Callback] = instantiate_callbacks(cfg.get("callbacks"))
 
     log.info("Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
-    
+
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
 
@@ -97,7 +98,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.info("Starting training!")
     trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
-    
+
     # Check why training stopped
     early_stopping = None
     for callback in callbacks:
@@ -129,9 +130,10 @@ def main(cfg: DictConfig) -> Optional[float]:
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     extras(cfg)
-    
+
     # Create CodeCarbon emissions tracker
     log.info("Instantiating CodeCarbon tracker")
+    os.makedirs(cfg.codecarbon.output_dir, exist_ok=True)
     tracker = instantiate_emissions_tracker(cfg)
 
     # train the model
@@ -143,7 +145,6 @@ def main(cfg: DictConfig) -> Optional[float]:
         metric_dict=metric_dict, metric_name=cfg.get("optimized_metric")
     )
 
-    # return optimized metric
     return metric_value
 
 

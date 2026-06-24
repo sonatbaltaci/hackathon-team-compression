@@ -13,10 +13,13 @@ wheels/
 uv.lock
 
 # Data and logs
+electricity_maps_key.txt
 data/*
 logs/*
 codecarbon/*
+predictions/*
 
 !data/.gitkeep
 !logs/.gitkeep
 !codecarbon/.gitkeep
+!predictions/.gitkeep

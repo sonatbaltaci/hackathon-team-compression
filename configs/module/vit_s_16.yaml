@@ -9,7 +9,7 @@ optimizer:
 main_scheduler:
     _target_: torch.optim.lr_scheduler.CosineAnnealingLR
     _partial_: true
-    T_max: null # Requires knowing total number of training steps
+    T_max: null # Requires knowing total number of training steps, initialized in train.py
     eta_min: 0
 
 warmup_steps: 1e4
@@ -22,14 +22,11 @@ warmup_scheduler:
 
 # ViT-S/16
 net:
-  _target_: torchvision.models.vision_transformer._vision_transformer
+  _target_: src.modules.nets.vision_transformer.VisionTransformer
+  image_size: 224
   patch_size: 16
   num_layers: 12
   num_heads: 6
   hidden_dim: 384
   mlp_dim: 1536
-  weights: null
-  progress: False
 
-# compile model for faster training with pytorch 2.0
-compile: ???
