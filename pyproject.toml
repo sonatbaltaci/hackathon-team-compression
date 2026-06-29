@@ -29,4 +29,4 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [dependency-groups]
-dev = ["ruff>=0.13.3"]
+dev = ["ruff>=0.13.3", "pre-commit>=3.7.1"]
