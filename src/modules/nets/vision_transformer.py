@@ -41,11 +41,12 @@ class VisionTransformer(nn.Module):
         conv_stem_configs: list[ConvStemConfig] | None = None,
         num_registers: int = 0,
         token_select: Callable[
-            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+            [torch.Tensor, torch.Tensor, torch.Tensor | None, int, int],
+            tuple[list[torch.Tensor], list[torch.Tensor] | None],
         ]
         | None = None,
         token_aggregate: Callable[
-            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None, int, int],
             tuple[torch.Tensor, torch.Tensor | None],
         ]
         | None = None,
@@ -202,11 +203,12 @@ class Encoder(nn.Module):
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         num_registers: int = 0,
         token_select: Callable[
-            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+            [torch.Tensor, torch.Tensor, torch.Tensor | None, int, int],
+            tuple[list[torch.Tensor], list[torch.Tensor] | None],
         ]
         | None = None,
         token_aggregate: Callable[
-            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None, int, int],
             tuple[torch.Tensor, torch.Tensor | None],
         ]
         | None = None,
@@ -228,6 +230,8 @@ class Encoder(nn.Module):
                 num_registers,
                 token_select,
                 token_aggregate,
+                current_layer=i,
+                total_layers=num_layers,
             )
         self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
@@ -251,18 +255,24 @@ class EncoderBlock(nn.Module):
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         num_registers: int = 0,
         token_select: Callable[
-            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+            [torch.Tensor, torch.Tensor, torch.Tensor | None, int, int],
+            tuple[list[torch.Tensor], list[torch.Tensor] | None],
         ]
         | None = None,
         token_aggregate: Callable[
-            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None, int, int],
             tuple[torch.Tensor, torch.Tensor | None],
         ]
         | None = None,
+        *,
+        current_layer: int,
+        total_layers: int,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.num_registers = num_registers
+        self.current_layer = current_layer
+        self.total_layers = total_layers
         if (token_select is None) != (token_aggregate is None):
             msg = "token_select and token_aggregate must be provided together."
             raise ValueError(msg)
@@ -324,11 +334,16 @@ class EncoderBlock(nn.Module):
             register_tokens = parts[2] if self.num_registers > 0 else None
             # returns lists of tensors with token indices for patches and registers
             patch_selection_idcs, register_selection_idcs = self.token_select(
-                class_token, patch_tokens, register_tokens
+                class_token, patch_tokens, register_tokens, self.current_layer, self.total_layers
             )
             # aggregates tokens and returns new tokens tensors
             merged_patch_tokens, merged_register_tokens = self.token_aggregate(
-                patch_selection_idcs, register_selection_idcs, patch_tokens, register_tokens
+                patch_selection_idcs,
+                register_selection_idcs,
+                patch_tokens,
+                register_tokens,
+                self.current_layer,
+                self.total_layers,
             )
             # concatenate class token, merged patch tokens, and merged register tokens
             out = torch.cat([class_token, merged_patch_tokens], dim=1)
