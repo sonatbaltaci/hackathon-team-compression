@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 import torchvision.transforms.v2 as T
@@ -14,7 +14,7 @@ from torchvision.datasets.folder import IMG_EXTENSIONS, default_loader
 class UnlabeledImageFolder:
     # From https://github.com/pytorch/vision/issues/9050
 
-    def __init__(self, root_dir, patterns=None, transform=None):
+    def __init__(self, root_dir: str, patterns: list[str] | None = None, transform: T.Transform | None = None):
         self.root = Path(root_dir)
         self.images = []
         if patterns is None:
@@ -27,7 +27,7 @@ class UnlabeledImageFolder:
     def __len__(self):
         return len(self.images)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i: int):
         img = default_loader(self.images[i])
         if self.transform:
             img = self.transform(img)
@@ -74,25 +74,25 @@ class ImageNetDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_path: str = "data/",
-        train_dir: str = "train",
-        val_dir: str = "val",
-        test_dir: str = "test",
+        data_path: str = "data/",  # noqa: ARG002
+        train_dir: str = "train",  # noqa: ARG002
+        val_dir: str = "val",  # noqa: ARG002
+        test_dir: str = "test",  # noqa: ARG002
         eval_resize_size: int = 256,
         eval_crop_size: int = 224,
         train_crop_size: int = 224,
         interpolation: str = "bilinear",
         hflip_prob: float = 0.0,
-        auto_augment_policy: str = None,
-        ra_magnitude: int = None,
-        augmix_severity: int = None,
+        auto_augment_policy: str | None = None,
+        ra_magnitude: int | None = None,
+        augmix_severity: int | None = None,
         cutmix_alpha: float = 0.0,
         mixup_alpha: float = 0.0,
         random_erase_prob: float = 0.0,
         batch_size: int = 64,
-        num_workers: int = 4,
-        prefetch_factor: int = 2,
-        pin_memory: bool = False,
+        num_workers: int = 4,  # noqa: ARG002
+        prefetch_factor: int = 2,  # noqa: ARG002
+        pin_memory: bool = False,  # noqa: ARG002
     ) -> None:
         """Initialize an `ImageNetDataModule`.
 
@@ -105,9 +105,13 @@ class ImageNetDataModule(LightningDataModule):
         :param train_crop_size: The size to randomly crop the image for training. Defaults to `224`.
         :param interpolation: The interpolation method to use for resizing. Defaults to `'bilinear'`.
         :param hflip_prob: The probability of applying random horizontal flip during training. Defaults to `0.0`.
-        :param auto_augment_policy: The auto-augment policy to use during training. Can be one of `"ra"`, `"ta_wide"`, `"augmix"`, or any policy supported by `torchvision.transforms.AutoAugmentPolicy`. Defaults to `None` (no auto-augmentation).
-        :param ra_magnitude: The magnitude to use for RandAugment if `auto_augment_policy` is set to `"ra"`. Defaults to `None`.
-        :param augmix_severity: The severity to use for AugMix if `auto_augment_policy` is set to `"augmix"`. Defaults to `None`.
+        :param auto_augment_policy: The auto-augment policy to use during training. Can be one of `"ra"`, `"ta_wide"`,
+            `"augmix"`, or any policy supported by `torchvision.transforms.AutoAugmentPolicy`.
+            Defaults to `None` (no auto-augmentation).
+        :param ra_magnitude: The magnitude to use for RandAugment if `auto_augment_policy` is set to `"ra"`.
+            Defaults to `None`.
+        :param augmix_severity: The severity to use for AugMix if `auto_augment_policy` is set to `"augmix"`.
+            Defaults to `None`.
         :param cutmix_alpha: The alpha value for CutMix augmentation. Defaults to `0.0` (no CutMix).
         :param mixup_alpha: The alpha value for MixUp augmentation. Defaults to `0.0` (no MixUp).
         :param random_erase_prob: The probability of applying random erasing during training. Defaults to `0.0`.
@@ -127,35 +131,23 @@ class ImageNetDataModule(LightningDataModule):
         imagenet_mean = (0.485, 0.456, 0.406)
         imagenet_std = (0.229, 0.224, 0.225)
         train_transforms = []
-        train_transforms.append(
-            T.RandomResizedCrop(train_crop_size, interpolation=interpolation_mode)
-        )
+        train_transforms.append(T.RandomResizedCrop(train_crop_size, interpolation=interpolation_mode))
         if hflip_prob > 0:
             train_transforms.append(T.RandomHorizontalFlip(hflip_prob))
 
         if auto_augment_policy is not None:
             if auto_augment_policy == "ra":
-                train_transforms.append(
-                    T.RandAugment(interpolation=interpolation_mode, magnitude=ra_magnitude)
-                )
+                train_transforms.append(T.RandAugment(interpolation=interpolation_mode, magnitude=ra_magnitude))
             elif auto_augment_policy == "ta_wide":
                 train_transforms.append(T.TrivialAugmentWide(interpolation=interpolation_mode))
             elif auto_augment_policy == "augmix":
-                train_transforms.append(
-                    T.AugMix(interpolation=interpolation_mode, severity=augmix_severity)
-                )
+                train_transforms.append(T.AugMix(interpolation=interpolation_mode, severity=augmix_severity))
             else:
                 aa_policy = T.AutoAugmentPolicy(auto_augment_policy)
-                train_transforms.append(
-                    T.AutoAugment(policy=aa_policy, interpolation=interpolation_mode)
-                )
+                train_transforms.append(T.AutoAugment(policy=aa_policy, interpolation=interpolation_mode))
 
         train_transforms.extend(
-            [
-                T.PILToTensor(),
-                T.ToDtype(torch.float, scale=True),
-                T.Normalize(mean=imagenet_mean, std=imagenet_std),
-            ]
+            [T.PILToTensor(), T.ToDtype(torch.float, scale=True), T.Normalize(mean=imagenet_mean, std=imagenet_std)]
         )
         if random_erase_prob > 0:
             train_transforms.append(T.RandomErasing(p=random_erase_prob))
@@ -174,17 +166,14 @@ class ImageNetDataModule(LightningDataModule):
         )
 
         if cutmix_alpha or mixup_alpha:
-            mixup_cutmix = self._get_mixup_cutmix(
-                mixup_alpha=mixup_alpha,
-                cutmix_alpha=cutmix_alpha,
-            )
+            mixup_cutmix = self._get_mixup_cutmix(mixup_alpha=mixup_alpha, cutmix_alpha=cutmix_alpha)
             self.collate_fn = lambda batch: mixup_cutmix(*default_collate(batch))
         else:
             self.collate_fn = default_collate
 
-        self.data_train: Optional[Dataset] = None
-        self.data_val: Optional[Dataset] = None
-        self.data_test: Optional[Dataset] = None
+        self.data_train: Dataset | None = None
+        self.data_val: Dataset | None = None
+        self.data_test: Dataset | None = None
 
         self.batch_size_per_device = batch_size
 
@@ -204,9 +193,8 @@ class ImageNetDataModule(LightningDataModule):
 
         Do not use it to assign state (self.x = y).
         """
-        pass
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: str | None = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
 
         This method is called by Lightning before `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and
@@ -216,23 +204,19 @@ class ImageNetDataModule(LightningDataModule):
 
         :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
         """
-        if stage in ("test", "predict") or stage is None:
-            if not self.data_test:
-                self.data_test = UnlabeledImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.test_dir),
-                    transform=self.eval_transforms,
-                )
+        if (stage in ("test", "predict") or stage is None) and not self.data_test:
+            self.data_test = UnlabeledImageFolder(
+                os.path.join(self.hparams.data_path, self.hparams.test_dir), transform=self.eval_transforms
+            )
         if stage in ("fit", "validate") or stage is None:
             if not self.data_train:
                 self.data_train = ImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.train_dir),
-                    transform=self.train_transforms,
+                    os.path.join(self.hparams.data_path, self.hparams.train_dir), transform=self.train_transforms
                 )
 
             if not self.data_val:
                 self.data_val = ImageFolder(
-                    os.path.join(self.hparams.data_path, self.hparams.val_dir),
-                    transform=self.eval_transforms,
+                    os.path.join(self.hparams.data_path, self.hparams.val_dir), transform=self.eval_transforms
                 )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -285,31 +269,29 @@ class ImageNetDataModule(LightningDataModule):
         """
         return self.test_dataloader()
 
-    def teardown(self, stage: Optional[str] = None) -> None:
+    def teardown(self, stage: str | None = None) -> None:
         """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`,
         `trainer.test()`, and `trainer.predict()`.
 
         :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
             Defaults to ``None``.
         """
-        pass
 
-    def state_dict(self) -> Dict[Any, Any]:
+    def state_dict(self) -> dict[Any, Any]:
         """Called when saving a checkpoint. Implement to generate and save the datamodule state.
 
         :return: A dictionary containing the datamodule state that you want to save.
         """
         return {}
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Called when loading a checkpoint. Implement to reload datamodule state given datamodule
         `state_dict()`.
 
         :param state_dict: The datamodule state returned by `self.state_dict()`.
         """
-        pass
 
-    def _get_mixup_cutmix(self, mixup_alpha, cutmix_alpha):
+    def _get_mixup_cutmix(self, mixup_alpha: float, cutmix_alpha: float):  # noqa: ANN202
         mixup_cutmix = []
         if mixup_alpha > 0:
             mixup_cutmix.append(T.MixUp(alpha=mixup_alpha, num_classes=self.num_classes))
