@@ -113,7 +113,14 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
         # Note: Flash Attention only works with mixed precision, otherwise you will see:
         #   RuntimeError('No available kernel. Aborting execution.')
         # when calling `scaled_dot_product_attention`
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+        ckpt_path = cfg.get("ckpt_path")
+        trainer.fit(
+            model=model,
+            datamodule=datamodule,
+            ckpt_path=ckpt_path,
+            # Full Lightning checkpoints store hyperparams (e.g. functools.partial).
+            weights_only=False if ckpt_path else None,
+        )
 
     # Check why training stopped
     early_stopping_cb = callback_dict.get("EarlyStopping")

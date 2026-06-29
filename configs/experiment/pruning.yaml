@@ -29,7 +29,7 @@ module:
 callbacks:
   model_checkpoint:
     dirpath: ${paths.output_dir}/checkpoints
-    filename: "step_{step}"
+    filename: "step-{step}"
     every_n_train_steps: 10000
     every_n_epochs: null
     save_top_k: -1

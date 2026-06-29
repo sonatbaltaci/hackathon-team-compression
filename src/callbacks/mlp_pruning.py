@@ -1,13 +1,12 @@
 import logging
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, override
 
 import torch
-import torch.nn as nn
 from lightning import Callback, Trainer
 from lightning.pytorch.core.module import LightningModule
 from lightning.pytorch.utilities import rank_zero_only
-from typing_extensions import override
+from torch import nn
 
 from src.modules.nets.vision_transformer import EncoderBlock, MLPBlock, VisionTransformer
 
@@ -18,11 +17,7 @@ def count_trainable_params(module: nn.Module) -> int:
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
-def prune_mlp_block(
-    mlp: MLPBlock,
-    amount: float,
-    min_hidden: int = 64,
-) -> tuple[MLPBlock, int, int]:
+def prune_mlp_block(mlp: MLPBlock, amount: float, min_hidden: int = 64) -> tuple[MLPBlock, int, int]:
     """Physically prune the MLP expansion dimension by removing whole hidden units."""
     fc1 = mlp[0]
     fc2 = mlp[3]
@@ -38,10 +33,12 @@ def prune_mlp_block(
         return mlp, old_hidden, old_hidden
 
     dropout_p = tail_dropout.p if isinstance(tail_dropout, nn.Dropout) else 0.0
+    device = fc1.weight.device
+    dtype = fc1.weight.dtype
     norms = fc1.weight.detach().norm(dim=1)
     keep = torch.topk(norms, k=new_hidden, largest=True).indices.sort().values
 
-    new_mlp = MLPBlock(in_dim, new_hidden, dropout_p)
+    new_mlp = MLPBlock(in_dim, new_hidden, dropout_p).to(device=device, dtype=dtype)
     with torch.no_grad():
         new_mlp[0].weight.copy_(fc1.weight[keep])
         new_mlp[0].bias.copy_(fc1.bias[keep])
@@ -51,11 +48,7 @@ def prune_mlp_block(
     return new_mlp, old_hidden, new_hidden
 
 
-def prune_vit_mlp_blocks(
-    net: VisionTransformer,
-    amount: float,
-    min_hidden: int = 64,
-) -> dict[str, int]:
+def prune_vit_mlp_blocks(net: VisionTransformer, amount: float, min_hidden: int = 64) -> dict[str, int]:
     """Replace each encoder MLP with a physically narrower block."""
     old_hidden: int | None = None
     new_hidden: int | None = None
@@ -73,11 +66,7 @@ def prune_vit_mlp_blocks(
     if old_hidden is None or new_hidden is None:
         raise ValueError("No encoder MLP blocks found to prune")
 
-    return {
-        "blocks_pruned": blocks_pruned,
-        "old_mlp_hidden": old_hidden,
-        "new_mlp_hidden": new_hidden,
-    }
+    return {"blocks_pruned": blocks_pruned, "old_mlp_hidden": old_hidden, "new_mlp_hidden": new_hidden}
 
 
 def rebind_optimizers(trainer: Trainer, pl_module: LightningModule) -> None:
@@ -113,7 +102,7 @@ class ViTProgressiveMLPPruning(Callback):
 
     def __init__(
         self,
-        prune_at_steps: Union[int, List[int]] = 40_000,
+        prune_at_steps: int | list[int] = 40_000,
         mlp_prune_amount: float = 0.12,
         min_hidden: int = 64,
         reinit_optimizer: bool = True,
@@ -142,14 +131,7 @@ class ViTProgressiveMLPPruning(Callback):
         return None
 
     @override
-    def on_train_batch_end(
-        self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs,
-        batch,
-        batch_idx: int,
-    ) -> None:
+    def on_train_batch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         target = self._pending_target(trainer.global_step)
         if target is None:
             return
@@ -171,9 +153,7 @@ class ViTProgressiveMLPPruning(Callback):
         return Path(trainer.default_root_dir) / "checkpoints"
 
     @rank_zero_only
-    def _apply_pruning(
-        self, trainer: Trainer, pl_module: LightningModule, target_step: int
-    ) -> None:
+    def _apply_pruning(self, trainer: Trainer, pl_module: LightningModule, target_step: int) -> None:
         net = pl_module.net
         if not isinstance(net, VisionTransformer):
             raise TypeError("ViTProgressiveMLPPruning expects pl_module.net to be a VisionTransformer")
