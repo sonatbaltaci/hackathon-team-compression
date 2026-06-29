@@ -30,7 +30,7 @@ net:
   hidden_dim: 384
   mlp_dim: 1536
   router:
-    _target_: src.modules.nets.router.Router
+    _target_: src.modules.nets.vision_transformer.Router
     percent_to_keep: 0.5
   router_start_index: [2]
   router_end_index: [8]
