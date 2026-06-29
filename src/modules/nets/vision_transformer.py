@@ -25,7 +25,7 @@ class ConvStemConfig(NamedTuple):
 class VisionTransformer(nn.Module):
     """Vision Transformer as per https://arxiv.org/abs/2010.11929."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         image_size: int,
         patch_size: int,
@@ -39,6 +39,16 @@ class VisionTransformer(nn.Module):
         representation_size: int | None = None,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         conv_stem_configs: list[ConvStemConfig] | None = None,
+        num_registers: int = 0,
+        token_select: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+        ]
+        | None = None,
+        token_aggregate: Callable[
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            tuple[torch.Tensor, torch.Tensor | None],
+        ]
+        | None = None,
     ):
         super().__init__()
         torch._assert(image_size % patch_size == 0, "Input shape indivisible by patch size!")
@@ -51,6 +61,7 @@ class VisionTransformer(nn.Module):
         self.num_classes = num_classes
         self.representation_size = representation_size
         self.norm_layer = norm_layer
+        self.num_registers = num_registers
 
         if conv_stem_configs is not None:
             # As per https://arxiv.org/abs/2106.14881
@@ -84,8 +95,23 @@ class VisionTransformer(nn.Module):
         self.class_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
         seq_length += 1
 
+        # Add registers
+        if num_registers != 0:
+            self.registers = nn.Parameter(torch.zeros(1, num_registers, hidden_dim))
+            seq_length += num_registers
+
         self.encoder = Encoder(
-            seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer
+            seq_length,
+            num_layers,
+            num_heads,
+            hidden_dim,
+            mlp_dim,
+            dropout,
+            attention_dropout,
+            norm_layer,
+            num_registers,
+            token_select,
+            token_aggregate,
         )
         self.seq_length = seq_length
 
@@ -123,7 +149,7 @@ class VisionTransformer(nn.Module):
             nn.init.zeros_(self.heads.head.bias)
 
     def _process_input(self, x: torch.Tensor) -> torch.Tensor:
-        n, c, h, w = x.shape
+        n, _, h, w = x.shape
         p = self.patch_size
         torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
         torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
@@ -150,6 +176,8 @@ class VisionTransformer(nn.Module):
         # Expand the class token to the full batch
         batch_class_token = self.class_token.expand(n, -1, -1)
         x = torch.cat([batch_class_token, x], dim=1)
+        if self.num_registers != 0:
+            x = torch.cat([x, self.registers.expand(n, -1, -1)], dim=1)
 
         x = self.encoder(x)
 
@@ -172,6 +200,16 @@ class Encoder(nn.Module):
         dropout: float,
         attention_dropout: float,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        num_registers: int = 0,
+        token_select: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+        ]
+        | None = None,
+        token_aggregate: Callable[
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            tuple[torch.Tensor, torch.Tensor | None],
+        ]
+        | None = None,
     ):
         super().__init__()
         # Note that batch_size is on the first dim because
@@ -181,7 +219,15 @@ class Encoder(nn.Module):
         layers: OrderedDict[str, nn.Module] = OrderedDict()
         for i in range(num_layers):
             layers[f"encoder_layer_{i}"] = EncoderBlock(
-                num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer
+                num_heads,
+                hidden_dim,
+                mlp_dim,
+                dropout,
+                attention_dropout,
+                norm_layer,
+                num_registers,
+                token_select,
+                token_aggregate,
             )
         self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
@@ -203,9 +249,23 @@ class EncoderBlock(nn.Module):
         dropout: float,
         attention_dropout: float,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        num_registers: int = 0,
+        token_select: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor | None], tuple[list[torch.Tensor], list[torch.Tensor] | None]
+        ]
+        | None = None,
+        token_aggregate: Callable[
+            [list[torch.Tensor], list[torch.Tensor] | None, torch.Tensor, torch.Tensor | None],
+            tuple[torch.Tensor, torch.Tensor | None],
+        ]
+        | None = None,
     ):
         super().__init__()
         self.num_heads = num_heads
+        self.num_registers = num_registers
+        if (token_select is None) != (token_aggregate is None):
+            msg = "token_select and token_aggregate must be provided together."
+            raise ValueError(msg)
 
         # Attention block
         self.ln_1 = norm_layer(hidden_dim)
@@ -216,6 +276,10 @@ class EncoderBlock(nn.Module):
         self.ln_2 = norm_layer(hidden_dim)
         self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
+        # Token selection and aggregation
+        self.token_select = token_select
+        self.token_aggregate = token_aggregate
+
     def forward(self, x_in: torch.Tensor) -> torch.Tensor:
         torch._assert(x_in.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x_in.shape}")
         x = self.ln_1(x_in)
@@ -225,7 +289,58 @@ class EncoderBlock(nn.Module):
 
         y = self.ln_2(x)
         y = self.mlp(y)
-        return x + y
+        out = x + y
+
+        if self.token_select is not None and self.token_aggregate is not None:
+            """Token dropping/merging logic:
+            1. Split class token, patch tokens, and register tokens
+            2. `self.token_select` function returns a list of tensors with token indices for output
+                patches and registers. I.e., if there are 10 patches and 2 registers, and want to keep
+                2 patches and the 2 registers, you should return a list of 2 tensors and another one of 2 tensors,
+                e.g., [[0], [5]] and [[1, 2, 3, 4], [6, 7, 8, 9]]
+            3. `self.token_aggregate` function takes in the list of patch token indices and register token indices,
+                as well as the patch tokens and register tokens, and aggregates them. E.g., if we average pool, on
+                the previous example we would return something like `patch_tokens[:, [0, 5]]` and
+                `torch.stack(
+                    [
+                        torch.cat([register_tokens[:, [0]], patch_tokens[:, [1, 2, 3, 4]]], dim=1).mean(dim=1),
+                        torch.cat([register_tokens[:, [1]], patch_tokens[:, [6, 7, 8, 9]]], dim=1).mean(dim=1),
+                    ],
+                    dim=1,
+                )`.
+            4. Concatenate class token, patch tokens, and register tokens back together.
+
+            If there are no registers, then the token_select gets None in the register_tokens argument and should
+            return None for the register_selection_idcs. Similarly, the token_aggregate will get None for the
+            register_selection_idcs and register_tokens and should return None for the merged_register_tokens.
+
+            We do NOT support dropping or reducing the number of registers.
+            """
+            # split class token, patch tokens, and register tokens
+            num_patches = out.shape[1] - 1 - self.num_registers
+            split_sizes = [1, num_patches, self.num_registers] if self.num_registers > 0 else [1, num_patches]
+            parts = torch.split(out, split_sizes, dim=1)
+            class_token, patch_tokens = parts[0], parts[1]
+            register_tokens = parts[2] if self.num_registers > 0 else None
+            # returns lists of tensors with token indices for patches and registers
+            patch_selection_idcs, register_selection_idcs = self.token_select(
+                class_token, patch_tokens, register_tokens
+            )
+            # aggregates tokens and returns new tokens tensors
+            merged_patch_tokens, merged_register_tokens = self.token_aggregate(
+                patch_selection_idcs, register_selection_idcs, patch_tokens, register_tokens
+            )
+            # concatenate class token, merged patch tokens, and merged register tokens
+            out = torch.cat([class_token, merged_patch_tokens], dim=1)
+            if self.num_registers > 0:
+                torch._assert(merged_register_tokens is not None, "Registers must be preserved when num_registers > 0.")
+                torch._assert(
+                    merged_register_tokens.shape[1] == self.num_registers,
+                    "Token aggregation must preserve the number of registers.",
+                )
+                out = torch.cat([out, merged_register_tokens], dim=1)
+
+        return out
 
 
 class MLP(torch.nn.Sequential):
