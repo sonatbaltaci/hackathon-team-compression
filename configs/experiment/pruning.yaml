@@ -11,9 +11,12 @@
 #     callbacks.progressive_mlp_pruning.prune_at_steps=20000 \
 #     experiment_name=progressive_mlp_prune_at_20k
 #
+# Multi-step increasing prune (10k / 20k / 30k):
+#   uv run src/train.py experiment=pruning_multistep
+#
 # Checkpoints:
-#   step_10000.ckpt, step_20000.ckpt, ...  (every 10k, full or pruned state)
-#   pre_prune_step_<N>.ckpt                 (backup right before prune at N)
+#   step-10000.ckpt, step-20000.ckpt, ...  (every 10k via save_step_checkpoints_every_n)
+#   pre_prune_step_<N>.ckpt                 (optional; off by default)
 
 defaults:
   - override /trainer: imagenet_vit_s_16
@@ -29,11 +32,10 @@ module:
 callbacks:
   model_checkpoint:
     dirpath: ${paths.output_dir}/checkpoints
-    filename: "step-{step}"
-    every_n_train_steps: 10000
-    every_n_epochs: null
-    save_top_k: -1
     save_last: true
+    every_n_train_steps: null
+    every_n_epochs: null
+    save_top_k: 0
     monitor: null
     save_on_train_epoch_end: false
 
@@ -44,4 +46,5 @@ callbacks:
     min_hidden: 64
     reinit_optimizer: true
     defer_after_checkpoint: true
-    save_pre_prune_checkpoint: true
+    save_pre_prune_checkpoint: false
+    save_step_checkpoints_every_n: 10000

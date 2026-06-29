@@ -1,0 +1,38 @@
+# @package _global_
+#
+# Multi-step progressive MLP pruning with increasing amounts.
+# Run: uv run src/train.py experiment=pruning_multistep
+#
+# Prune at 10k / 20k / 40k with amounts 12% / 15% / 18% of current MLP width.
+# Step checkpoints every 10k (including non-prune steps like 30k).
+
+defaults:
+  - override /trainer: imagenet_vit_s_16
+
+experiment_name: "progressive_mlp_multistep"
+tags: ["ablate", "train"]
+
+seed: 0
+
+module:
+  compile: false
+
+callbacks:
+  model_checkpoint:
+    dirpath: ${paths.output_dir}/checkpoints
+    save_last: true
+    every_n_train_steps: null
+    every_n_epochs: null
+    save_top_k: 0
+    monitor: null
+    save_on_train_epoch_end: false
+
+  progressive_mlp_pruning:
+    _target_: src.callbacks.mlp_pruning.ViTProgressiveMLPPruning
+    prune_at_steps: [10000, 20000, 40000]
+    mlp_prune_amount: [0.12, 0.15, 0.18]
+    min_hidden: 64
+    reinit_optimizer: true
+    defer_after_checkpoint: true
+    save_pre_prune_checkpoint: false
+    save_step_checkpoints_every_n: 10000
