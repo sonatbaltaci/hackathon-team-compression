@@ -7,17 +7,6 @@ defaults:
   - override /trainer: imagenet_vit_s_16
   - override /module: vit_s_16_token_drop
 
-# all parameters below will be merged with parameters from default configurations set above
-# this allows you to overwrite only specified parameters
-
-seed: 42
-
-trainer:
-  precision: 32
-
-module:
-  compile: false
-
 # Remember to define experiment_name and tags in all your experiments!
 # First tag options: data, explore, baseline, ablate, hyperparam, final, <custom tag>
 # Second tag options: train, pre-train, post-train, debug, <custom tag>
