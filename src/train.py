@@ -1,15 +1,13 @@
 import contextlib
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import hydra
 import lightning as L
 import rootutils
 import torch
-from codecarbon import EmissionsTracker
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.callbacks.early_stopping import EarlyStoppingReason
-from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
@@ -31,7 +29,7 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # more info: https://github.com/ashleve/rootutils
 # ------------------------------------------------------------------------------------ #
 
-from src.utils import (
+from src.utils import (  # noqa: E402
     RankedLogger,
     extras,
     get_metric_value,
@@ -42,6 +40,11 @@ from src.utils import (
     task_wrapper,
 )
 
+if TYPE_CHECKING:
+    from lightning.pytorch.loggers import Logger
+
+    from codecarbon import EmissionsTracker
+
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -50,7 +53,7 @@ torch.set_float32_matmul_precision("high")
 
 
 @task_wrapper
-def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Trains the model.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during
@@ -70,19 +73,17 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         datamodule.setup(stage="fit")  # Load training set
         bsize = cfg.datamodule.batch_size
         steps_per_epoch = math.ceil(len(datamodule.data_train) / bsize)
-        cfg.module.main_scheduler.T_max = (
-            cfg.trainer.max_epochs * steps_per_epoch - cfg.module.warmup_steps
-        )
+        cfg.module.main_scheduler.T_max = cfg.trainer.max_epochs * steps_per_epoch - cfg.module.warmup_steps
 
     log.info(f"Instantiating module <{cfg.module._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.module)
 
     log.info("Instantiating loggers...")
-    logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
+    logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
 
     log.info("Instantiating callbacks...")
-    callback_dict: Dict[str, Callback] = instantiate_callbacks(cfg.get("callbacks"))
-    callbacks: List[Callback] = list(callback_dict.values())
+    callback_dict: dict[str, Callback] = instantiate_callbacks(cfg.get("callbacks"))
+    callbacks: list[Callback] = list(callback_dict.values())
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
@@ -133,7 +134,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="train.yaml")
-def main(cfg: DictConfig) -> Optional[float]:
+def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 
     :param cfg: DictConfig configuration composed by Hydra.
@@ -147,11 +148,7 @@ def main(cfg: DictConfig) -> Optional[float]:
     metric_dict, _ = train(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
-    metric_value = get_metric_value(
-        metric_dict=metric_dict, metric_name=cfg.get("optimized_metric")
-    )
-
-    return metric_value
+    return get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
 
 
 if __name__ == "__main__":
