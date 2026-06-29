@@ -200,6 +200,7 @@ class Encoder(nn.Module):
         self.ln = norm_layer(hidden_dim)
 
         self.queries = nn.Parameter(torch.zeros(1, num_queries, hidden_dim))
+        torch.nn.init.trunc_normal_(self.queries, std=0.02)
         self.pooling_layer_index = pooling_layer_index
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -207,7 +208,7 @@ class Encoder(nn.Module):
         x = x + self.pos_embedding
         x = self.dropout(x)
         for i, layer in enumerate(self.layers):
-            x = layer(x, self.queries.expand(x.size(0), -1, -1)) if i == self.pooling_layer_index else layer(x)
+            x = self.layers[layer](x, self.queries.expand(x.size(0), -1, -1)) if i == self.pooling_layer_index else self.layers[layer](x)
         return self.ln(x)
 
 
@@ -235,7 +236,7 @@ class EncoderBlock(nn.Module):
         self.ln_2 = norm_layer(hidden_dim)
         self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
-    def forward(self, x_in: torch.Tensor, queries: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_in: torch.Tensor, queries: torch.Tensor=None) -> torch.Tensor:
         torch._assert(x_in.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x_in.shape}")
         x = self.ln_1(x_in)
         if queries is not None:
