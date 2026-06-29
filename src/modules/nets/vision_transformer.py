@@ -38,10 +38,15 @@ class VisionTransformer(nn.Module):
         num_classes: int = 1000,
         representation_size: int | None = None,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-        conv_stem_configs: list[ConvStemConfig] | None = None,
+        conv_stem_configs: Optional[list[ConvStemConfig]] = None,
+        router: Optional[Callable[..., nn.Module]] = None,
+        router_start_index: Optional[list] = None,
+        router_end_index: Optional[list] = None,
     ):
         super().__init__()
-        torch._assert(image_size % patch_size == 0, "Input shape indivisible by patch size!")
+        torch._assert(
+            image_size % patch_size == 0, "Input shape indivisible by patch size!"
+        )
         self.image_size = image_size
         self.patch_size = patch_size
         self.hidden_dim = hidden_dim
@@ -70,12 +75,18 @@ class VisionTransformer(nn.Module):
                 )
                 prev_channels = conv_stem_layer_config.out_channels
             seq_proj.add_module(
-                "conv_last", nn.Conv2d(in_channels=prev_channels, out_channels=hidden_dim, kernel_size=1)
+                "conv_last",
+                nn.Conv2d(
+                    in_channels=prev_channels, out_channels=hidden_dim, kernel_size=1
+                ),
             )
             self.conv_proj: nn.Module = seq_proj
         else:
             self.conv_proj = nn.Conv2d(
-                in_channels=3, out_channels=hidden_dim, kernel_size=patch_size, stride=patch_size
+                in_channels=3,
+                out_channels=hidden_dim,
+                kernel_size=patch_size,
+                stride=patch_size,
             )
 
         seq_length = (image_size // patch_size) ** 2
@@ -85,7 +96,17 @@ class VisionTransformer(nn.Module):
         seq_length += 1
 
         self.encoder = Encoder(
-            seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer
+            seq_length,
+            num_layers,
+            num_heads,
+            hidden_dim,
+            mlp_dim,
+            dropout,
+            attention_dropout,
+            norm_layer,
+            router,
+            router_start_index,
+            router_end_index,
         )
         self.seq_length = seq_length
 
@@ -113,9 +134,13 @@ class VisionTransformer(nn.Module):
             if self.conv_proj.conv_last.bias is not None:
                 nn.init.zeros_(self.conv_proj.conv_last.bias)
 
-        if hasattr(self.heads, "pre_logits") and isinstance(self.heads.pre_logits, nn.Linear):
+        if hasattr(self.heads, "pre_logits") and isinstance(
+            self.heads.pre_logits, nn.Linear
+        ):
             fan_in = self.heads.pre_logits.in_features
-            nn.init.trunc_normal_(self.heads.pre_logits.weight, std=math.sqrt(1 / fan_in))
+            nn.init.trunc_normal_(
+                self.heads.pre_logits.weight, std=math.sqrt(1 / fan_in)
+            )
             nn.init.zeros_(self.heads.pre_logits.bias)
 
         if isinstance(self.heads.head, nn.Linear):
@@ -125,8 +150,14 @@ class VisionTransformer(nn.Module):
     def _process_input(self, x: torch.Tensor) -> torch.Tensor:
         n, c, h, w = x.shape
         p = self.patch_size
-        torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
-        torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
+        torch._assert(
+            h == self.image_size,
+            f"Wrong image height! Expected {self.image_size} but got {h}!",
+        )
+        torch._assert(
+            w == self.image_size,
+            f"Wrong image width! Expected {self.image_size} but got {w}!",
+        )
         n_h = h // p
         n_w = w // p
 
@@ -159,6 +190,40 @@ class VisionTransformer(nn.Module):
         return self.heads(x)
 
 
+class Router:
+    def __init__(self, percent_to_keep=0.5):
+        self.percent_to_keep = percent_to_keep
+        
+    def get_tokens_to_keep(self, x):
+        b, t, _ = x[:, 1:, :].shape
+
+        ## Number of tokens to keep ##
+        num_keep = int(t * self.percent_to_keep)
+
+        ## Random noise ##
+        rand_noise = torch.rand(b, t, device=x.device)
+        sorted_rand_noise = torch.argsort(rand_noise, dim=1)
+        indices_to_keep = sorted_rand_noise[:, :num_keep]
+        indices_to_keep += 1
+
+        return indices_to_keep
+
+    def drop_tokens(self, x, indices_to_keep):
+        b, t, d = x.shape
+        masked_x = torch.gather(x, 1, indices_to_keep.unsqueeze(-1).expand(-1, -1, d))
+        return masked_x
+
+    def recover_tokens(self, x, indices_to_keep, original_x):
+        recovered_x = torch.scatter(
+            original_x,
+            1,
+            indices_to_keep.unsqueeze(-1).expand(-1, -1, original_x.size(-1)),
+            x,
+        )
+
+        return recovered_x
+
+
 class Encoder(nn.Module):
     """Transformer Model Encoder for sequence to sequence translation."""
 
@@ -172,24 +237,58 @@ class Encoder(nn.Module):
         dropout: float,
         attention_dropout: float,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        router: Optional[Callable[..., nn.Module]] = None,
+        router_start_index: Optional[list] = None,
+        router_end_index: Optional[list] = None,
     ):
         super().__init__()
         # Note that batch_size is on the first dim because
         # we have batch_first=True in nn.MultiAttention() by default
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))  # from BERT
         self.dropout = nn.Dropout(dropout)
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        # layers: OrderedDict[str, nn.Module] = OrderedDict()
+        self.layers = nn.ModuleDict()
         for i in range(num_layers):
-            layers[f"encoder_layer_{i}"] = EncoderBlock(
-                num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer
+            self.layers[f"encoder_layer_{i}"] = EncoderBlock(
+                num_heads,
+                hidden_dim,
+                mlp_dim,
+                dropout,
+                attention_dropout,
+                norm_layer,
             )
-        self.layers = nn.Sequential(layers)
+        # self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
+        self.router = router
+        self.router_start_index = router_start_index
+        self.router_end_index = router_end_index
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
-        x = x + self.pos_embedding
-        return self.ln(self.layers(self.dropout(x)))
+    def forward(self, input: torch.Tensor):
+        torch._assert(
+            input.dim() == 3,
+            f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}",
+        )
+        input = input + self.pos_embedding
+        # return self.ln(self.layers(self.dropout(input)))
+        input = self.dropout(input)
+        for i, layer in enumerate(self.layers):
+            if (
+                self.training
+                and self.router is not None
+                and i in self.router_start_index
+            ):
+                original_input = input.clone()
+                indices_to_keep = self.router.get_tokens_to_keep(input)
+                input = self.router.drop_tokens(input, indices_to_keep)
+            input = self.layers[layer](input)
+
+            if self.training and self.router is not None and i in self.router_end_index:
+                input = self.router.recover_tokens(
+                    input, indices_to_keep, original_input
+                )
+
+        input = self.ln(input)
+        return input
 
 
 class EncoderBlock(nn.Module):
@@ -216,9 +315,12 @@ class EncoderBlock(nn.Module):
         self.ln_2 = norm_layer(hidden_dim)
         self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
-    def forward(self, x_in: torch.Tensor) -> torch.Tensor:
-        torch._assert(x_in.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x_in.shape}")
-        x = self.ln_1(x_in)
+    def forward(self, input: torch.Tensor):
+        torch._assert(
+            input.dim() == 3,
+            f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}",
+        )
+        x = self.ln_1(input)
         x, _ = self.self_attention(x, x, x, need_weights=False)
         x = self.dropout(x)
         x = x + x_in
@@ -281,7 +383,13 @@ class MLPBlock(MLP):
     _version = 2
 
     def __init__(self, in_dim: int, mlp_dim: int, dropout: float):
-        super().__init__(in_dim, [mlp_dim, in_dim], activation_layer=nn.GELU, inplace=None, dropout=dropout)
+        super().__init__(
+            in_dim,
+            [mlp_dim, in_dim],
+            activation_layer=nn.GELU,
+            inplace=None,
+            dropout=dropout,
+        )
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -335,10 +443,16 @@ class ConvNormActivation(torch.nn.Sequential):
             if isinstance(kernel_size, int) and isinstance(dilation, int):
                 padding = (kernel_size - 1) // 2 * dilation
             else:
-                _conv_dim = len(kernel_size) if isinstance(kernel_size, Sequence) else len(dilation)
+                _conv_dim = (
+                    len(kernel_size)
+                    if isinstance(kernel_size, Sequence)
+                    else len(dilation)
+                )
                 kernel_size = _make_ntuple(kernel_size, _conv_dim)
                 dilation = _make_ntuple(dilation, _conv_dim)
-                padding = tuple((kernel_size[i] - 1) // 2 * dilation[i] for i in range(_conv_dim))
+                padding = tuple(
+                    (kernel_size[i] - 1) // 2 * dilation[i] for i in range(_conv_dim)
+                )
         if bias is None:
             bias = norm_layer is None
 
