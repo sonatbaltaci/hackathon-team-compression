@@ -1,4 +1,4 @@
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import torch
 from lightning import LightningModule
@@ -42,11 +42,11 @@ class ImageNetModule(LightningModule):
     def __init__(
         self,
         net: torch.nn.Module,
-        compile: bool,
-        optimizer: torch.optim.Optimizer,
-        warmup_steps: int,
-        main_scheduler: torch.optim.lr_scheduler,
-        warmup_scheduler: torch.optim.lr_scheduler = None,
+        compile: bool,  # noqa: ARG002, A002
+        optimizer: torch.optim.Optimizer,  # noqa: ARG002
+        warmup_steps: int,  # noqa: ARG002
+        main_scheduler: torch.optim.lr_scheduler,  # noqa: ARG002
+        warmup_scheduler: torch.optim.lr_scheduler = None,  # noqa: ARG002
     ) -> None:
         """Initialize an `ImageNetModule`.
 
@@ -96,9 +96,7 @@ class ImageNetModule(LightningModule):
         self.val_acc1.reset()
         self.val_acc5.reset()
 
-    def model_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def model_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Perform a single model step on a batch of data.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target labels.
@@ -115,9 +113,7 @@ class ImageNetModule(LightningModule):
             y = y.argmax(dim=1)
         return loss, logits, y.long()
 
-    def training_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
-    ) -> torch.Tensor:
+    def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:  # noqa: ARG002
         """Perform a single training step on a batch of data from the training set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -138,7 +134,7 @@ class ImageNetModule(LightningModule):
         # return loss or backpropagation will fail
         return loss
 
-    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:  # noqa: ARG002
         """Perform a single validation step on a batch of data from the validation set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -155,7 +151,7 @@ class ImageNetModule(LightningModule):
         self.log("val/acc1", self.val_acc1, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc5", self.val_acc5, on_step=False, on_epoch=True, prog_bar=True)
 
-    def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    def test_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:  # noqa: ARG002
         """Perform a single test step on a batch of data from the test set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -182,7 +178,7 @@ class ImageNetModule(LightningModule):
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
 
-    def configure_optimizers(self) -> Dict[str, Any]:
+    def configure_optimizers(self) -> dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.
         Normally you'd need one. But in the case of GANs or similar you might have multiple.
 
@@ -196,20 +192,11 @@ class ImageNetModule(LightningModule):
         if self.hparams.warmup_steps > 0:
             warmup_scheduler = self.hparams.warmup_scheduler(optimizer=optimizer)
             scheduler = torch.optim.lr_scheduler.SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, main_scheduler],
-                milestones=[self.hparams.warmup_steps],
+                optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[self.hparams.warmup_steps]
             )
         else:
             scheduler = main_scheduler
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "step",
-                "frequency": 1,
-            },
-        }
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1}}
 
 
 if __name__ == "__main__":
