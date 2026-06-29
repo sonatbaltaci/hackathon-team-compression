@@ -1,0 +1,47 @@
+# @package _global_
+#
+# Progressive physical MLP pruning for ViT-S/16.
+#
+# First run (prune after 10k checkpoint):
+#   uv run src/train.py experiment=pruning
+#
+# Retry from full model at 10k, prune at 20k instead:
+#   uv run src/train.py experiment=pruning \
+#     ckpt_path=<run_dir>/checkpoints/step_10000.ckpt \
+#     callbacks.progressive_mlp_pruning.prune_at_steps=20000 \
+#     experiment_name=progressive_mlp_prune_at_20k
+#
+# Checkpoints:
+#   step_10000.ckpt, step_20000.ckpt, ...  (every 10k, full or pruned state)
+#   pre_prune_step_<N>.ckpt                 (backup right before prune at N)
+
+defaults:
+  - override /trainer: imagenet_vit_s_16
+
+experiment_name: "progressive_mlp_prune_at_10k"
+tags: ["explore", "train"]
+
+seed: 0
+
+module:
+  compile: false
+
+callbacks:
+  model_checkpoint:
+    dirpath: ${paths.output_dir}/checkpoints
+    filename: "step_{step}"
+    every_n_train_steps: 10000
+    every_n_epochs: null
+    save_top_k: -1
+    save_last: true
+    monitor: null
+    save_on_train_epoch_end: false
+
+  progressive_mlp_pruning:
+    _target_: src.callbacks.mlp_pruning.ViTProgressiveMLPPruning
+    prune_at_steps: 10000
+    mlp_prune_amount: 0.12
+    min_hidden: 64
+    reinit_optimizer: true
+    defer_after_checkpoint: true
+    save_pre_prune_checkpoint: true
