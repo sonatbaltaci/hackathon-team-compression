@@ -39,6 +39,8 @@ class VisionTransformer(nn.Module):
         representation_size: int | None = None,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         conv_stem_configs: list[ConvStemConfig] | None = None,
+        num_queries: int = 0,
+        pooling_layer_index: int = -1,
     ):
         super().__init__()
         torch._assert(image_size % patch_size == 0, "Input shape indivisible by patch size!")
@@ -85,7 +87,7 @@ class VisionTransformer(nn.Module):
         seq_length += 1
 
         self.encoder = Encoder(
-            seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer
+            seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer, num_queries, pooling_layer_index
         )
         self.seq_length = seq_length
 
@@ -172,6 +174,8 @@ class Encoder(nn.Module):
         dropout: float,
         attention_dropout: float,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        num_queries: int = 0,
+        pooling_layer_index: int = -1,
     ):
         super().__init__()
         # Note that batch_size is on the first dim because
@@ -185,11 +189,20 @@ class Encoder(nn.Module):
             )
         self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
+        
+        self.queries =  nn.Parameter(torch.zeros(1, num_queries, hidden_dim))
+        self.pooling_layer_index = pooling_layer_index
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
         x = x + self.pos_embedding
-        return self.ln(self.layers(self.dropout(x)))
+        x = self.dropout(x)
+        for i,layer in enumerate(self.layers):
+            if i == self.pooling_layer_index:
+                x = layer(x, self.queries.expand(x.size(0), -1, -1))
+            else:
+                x = layer(x)
+        return self.ln(x)
 
 
 class EncoderBlock(nn.Module):
@@ -216,12 +229,17 @@ class EncoderBlock(nn.Module):
         self.ln_2 = norm_layer(hidden_dim)
         self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
-    def forward(self, x_in: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_in: torch.Tensor, queries: torch.Tensor) -> torch.Tensor:
         torch._assert(x_in.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x_in.shape}")
         x = self.ln_1(x_in)
-        x, _ = self.self_attention(x, x, x, need_weights=False)
-        x = self.dropout(x)
-        x = x + x_in
+        if queries is not None:
+            compressed_patch_tokens, _ = self.self_attention(queries, x[:, 1:, :], x[:, 1:, :], need_weights=False)
+            x = torch.cat([x[:, 0:1, :], compressed_patch_tokens], dim=1)
+            x = self.dropout(x)
+        else:
+            x, _ = self.self_attention(x, x, x, need_weights=False)
+            x = self.dropout(x)
+            x = x + x_in
 
         y = self.ln_2(x)
         y = self.mlp(y)
