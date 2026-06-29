@@ -87,7 +87,16 @@ class VisionTransformer(nn.Module):
         seq_length += 1
 
         self.encoder = Encoder(
-            seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer, num_queries, pooling_layer_index
+            seq_length,
+            num_layers,
+            num_heads,
+            hidden_dim,
+            mlp_dim,
+            dropout,
+            attention_dropout,
+            norm_layer,
+            num_queries,
+            pooling_layer_index,
         )
         self.seq_length = seq_length
 
@@ -125,7 +134,7 @@ class VisionTransformer(nn.Module):
             nn.init.zeros_(self.heads.head.bias)
 
     def _process_input(self, x: torch.Tensor) -> torch.Tensor:
-        n, c, h, w = x.shape
+        n, _, h, w = x.shape
         p = self.patch_size
         torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
         torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
@@ -189,19 +198,16 @@ class Encoder(nn.Module):
             )
         self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
-        
-        self.queries =  nn.Parameter(torch.zeros(1, num_queries, hidden_dim))
+
+        self.queries = nn.Parameter(torch.zeros(1, num_queries, hidden_dim))
         self.pooling_layer_index = pooling_layer_index
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
         x = x + self.pos_embedding
         x = self.dropout(x)
-        for i,layer in enumerate(self.layers):
-            if i == self.pooling_layer_index:
-                x = layer(x, self.queries.expand(x.size(0), -1, -1))
-            else:
-                x = layer(x)
+        for i, layer in enumerate(self.layers):
+            x = layer(x, self.queries.expand(x.size(0), -1, -1)) if i == self.pooling_layer_index else layer(x)
         return self.ln(x)
 
 
