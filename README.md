@@ -149,11 +149,23 @@ with any Hydra command-line overrides that you need for your experiment.
 
 > You can visualize the GPU, CPU, and RAM power consumption measured by CodeCarbon on **wandb**. 
 
-## ✅ Evaluation
-Once the test set has been released, complete the [eval config](./configs/eval.yaml) with your selected **checkpoints** and your **team name**, then run:
+## 🔄 Validating
+
+You can evaluate your ideas on the validation set before we release the official test set. Complete the [eval config](./configs/eval.yaml) with your selected **checkpoints** and your **team name**, then run:
 ```bash
-uv run src/eval.py
+uv run src/valid.py
 ```
-This will register the output of the model for each image in the test set and upload the results to the evaluation server.
+This will send the energy consumption and metrics to a centralized evaluation server.
+
+**IMPORTANT**: For the upload to work, your machine needs to be on the lab network. If you trained elsewhere, copy your checkpoints to a lab server and run the script there.
+
+## ✅ Testing
+Once the test set has been released, modify the tags on the [eval config](./configs/eval.yaml) to `['final', 'evaluate']`, then run:
+```bash
+uv run src/test.py
+```
+This will register the output of the model for each image in the test set and upload the results and CodeCarbon metrics to the evaluation server.
+
+**IMPORTANT**: For the upload to work, your machine needs to be on the lab network. If you trained elsewhere, copy your checkpoints to a lab server and run the script there.
 
 We will reveal the test performance after everyone has submitted their results!
