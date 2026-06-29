@@ -1,0 +1,42 @@
+_target_: src.modules.imagenet_module.ImageNetModule
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-3
+  weight_decay: 1e-4
+
+main_scheduler:
+    _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+    _partial_: true
+    T_max: null # Requires knowing total number of training steps, initialized in train.py
+    eta_min: 0
+
+warmup_steps: 1e4
+
+warmup_scheduler:
+    _target_: torch.optim.lr_scheduler.LinearLR
+    _partial_: true
+    start_factor: 1e-2
+    total_iters: ${module.warmup_steps}
+
+# ViT-S/16
+net:
+  _target_: src.modules.nets.vision_transformer.VisionTransformer
+  image_size: 224
+  patch_size: 16
+  num_layers: 12
+  num_heads: 6
+  hidden_dim: 384
+  mlp_dim: 1536
+  num_registers: 1
+  token_select:
+    _target_: src.modules.nets.simple_drop.token_select
+    _partial_: true
+    drop_ratio: 0.25
+    drop_type: random # random, fixed
+    activate_after_n_layers: 2
+  token_aggregate:
+    _target_: src.modules.nets.simple_drop.token_aggregate
+    _partial_: true
+    register_aggregation_fn: sum # sum, mean etc
