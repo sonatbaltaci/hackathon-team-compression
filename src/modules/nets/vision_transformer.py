@@ -12,6 +12,8 @@ from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
 import torch
 import torch.nn as nn
 
+from src.modules.nets.router import MoDRouter
+
 
 class ConvStemConfig(NamedTuple):
     out_channels: int
@@ -39,6 +41,7 @@ class VisionTransformer(nn.Module):
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         conv_stem_configs: Optional[list[ConvStemConfig]] = None,
         router: Optional[Callable[..., nn.Module]] = None,
+        router_layers: Optional[list] = None,
         router_start_index: Optional[list] = None,
         router_end_index: Optional[list] = None,
     ):
@@ -104,6 +107,7 @@ class VisionTransformer(nn.Module):
             attention_dropout,
             norm_layer,
             router,
+            router_layers,
             router_start_index,
             router_end_index,
         )
@@ -200,40 +204,6 @@ class VisionTransformer(nn.Module):
         return x
 
 
-class Router:
-    def __init__(self, percent_to_keep=0.5):
-        self.percent_to_keep = percent_to_keep
-        
-    def get_tokens_to_keep(self, x):
-        b, t, _ = x[:, 1:, :].shape
-
-        ## Number of tokens to keep ##
-        num_keep = int(t * self.percent_to_keep)
-
-        ## Random noise ##
-        rand_noise = torch.rand(b, t, device=x.device)
-        sorted_rand_noise = torch.argsort(rand_noise, dim=1)
-        indices_to_keep = sorted_rand_noise[:, :num_keep]
-        indices_to_keep += 1
-
-        return indices_to_keep
-
-    def drop_tokens(self, x, indices_to_keep):
-        b, t, d = x.shape
-        masked_x = torch.gather(x, 1, indices_to_keep.unsqueeze(-1).expand(-1, -1, d))
-        return masked_x
-
-    def recover_tokens(self, x, indices_to_keep, original_x):
-        recovered_x = torch.scatter(
-            original_x,
-            1,
-            indices_to_keep.unsqueeze(-1).expand(-1, -1, original_x.size(-1)),
-            x,
-        )
-
-        return recovered_x
-
-
 class Encoder(nn.Module):
     """Transformer Model Encoder for sequence to sequence translation."""
 
@@ -248,6 +218,7 @@ class Encoder(nn.Module):
         attention_dropout: float,
         norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         router: Optional[Callable[..., nn.Module]] = None,
+        router_layers: Optional[list] = None,
         router_start_index: Optional[list] = None,
         router_end_index: Optional[list] = None,
     ):
@@ -258,7 +229,6 @@ class Encoder(nn.Module):
             torch.empty(1, seq_length, hidden_dim).normal_(std=0.02)
         )  # from BERT
         self.dropout = nn.Dropout(dropout)
-        # layers: OrderedDict[str, nn.Module] = OrderedDict()
         self.layers = nn.ModuleDict()
         for i in range(num_layers):
             self.layers[f"encoder_layer_{i}"] = EncoderBlock(
@@ -269,11 +239,20 @@ class Encoder(nn.Module):
                 attention_dropout,
                 norm_layer,
             )
-        # self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
-        self.router = router
+
+        self.router_layers = set(router_layers) if router_layers else set()
         self.router_start_index = router_start_index
         self.router_end_index = router_end_index
+
+        if router is not None and isinstance(router, MoDRouter):
+            self.routers = MoDRouter.create_per_layer_routers(
+                router, self.router_layers
+            )
+            self.router = None
+        else:
+            self.router = router
+            self.routers = None
 
     def forward(self, input: torch.Tensor):
         torch._assert(
@@ -281,23 +260,42 @@ class Encoder(nn.Module):
             f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}",
         )
         input = input + self.pos_embedding
-        # return self.ln(self.layers(self.dropout(input)))
         input = self.dropout(input)
-        for i, layer in enumerate(self.layers):
-            if (
-                self.training
-                and self.router is not None
-                and i in self.router_start_index
-            ):
-                original_input = input.clone()
-                indices_to_keep = self.router.get_tokens_to_keep(input)
-                input = self.router.drop_tokens(input, indices_to_keep)
-            input = self.layers[layer](input)
 
-            if self.training and self.router is not None and i in self.router_end_index:
-                input = self.router.recover_tokens(
-                    input, indices_to_keep, original_input
-                )
+        for i, layer_name in enumerate(self.layers):
+            if self.routers is not None and i in self.router_layers:
+                router = self.routers[str(i)]
+                original_input = input.clone()
+                indices_to_keep, weights = router(input)
+                input_subset = router.drop_tokens(input, indices_to_keep)
+                original_subset = router.drop_tokens(original_input, indices_to_keep)
+                processed = self.layers[layer_name](input_subset)
+                w = weights.unsqueeze(-1)
+                blended = torch.cat([
+                    processed[:, :1, :],
+                    w * processed[:, 1:, :] + (1 - w) * original_subset[:, 1:, :],
+                ], dim=1)
+                input = router.recover_tokens(blended, indices_to_keep, original_input)
+            else:
+                if (
+                    self.training
+                    and self.router is not None
+                    and i in self.router_start_index
+                ):
+                    original_input = input.clone()
+                    indices_to_keep = self.router.get_tokens_to_keep(input)
+                    input = self.router.drop_tokens(input, indices_to_keep)
+
+                input = self.layers[layer_name](input)
+
+                if (
+                    self.training
+                    and self.router is not None
+                    and i in self.router_end_index
+                ):
+                    input = self.router.recover_tokens(
+                        input, indices_to_keep, original_input
+                    )
 
         input = self.ln(input)
         return input
