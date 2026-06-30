@@ -1,25 +1,29 @@
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import Any, Dict, List, Tuple
 
 import hydra
 import rootutils
 import torch
+from lightning import LightningDataModule, LightningModule, Trainer
+from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.utils import RankedLogger, extras, instantiate_loggers, log_hyperparameters, task_wrapper  # noqa: E402
-
-if TYPE_CHECKING:
-    from lightning import LightningDataModule, LightningModule, Trainer
-    from lightning.pytorch.loggers import Logger
+from src.utils import (
+    RankedLogger,
+    extras,
+    instantiate_loggers,
+    log_hyperparameters,
+    task_wrapper,
+)
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
 @task_wrapper
-def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Produces test set predictions with the defined checkpoints and sends them
     to an evaluation server.
 
@@ -29,7 +33,7 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     :param cfg: DictConfig configuration composed by Hydra.
     :return: Tuple[dict, dict] with metrics and dict with all instantiated objects.
     """
-    assert cfg.checkpoints  # noqa: S101
+    assert cfg.checkpoints
 
     log.info(f"Instantiating datamodule <{cfg.datamodule._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.datamodule)
@@ -38,12 +42,18 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     model: LightningModule = hydra.utils.instantiate(cfg.module)
 
     log.info("Instantiating loggers...")
-    logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
+    logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, logger=logger)
 
-    object_dict = {"cfg": cfg, "datamodule": datamodule, "model": model, "logger": logger, "trainer": trainer}
+    object_dict = {
+        "cfg": cfg,
+        "datamodule": datamodule,
+        "model": model,
+        "logger": logger,
+        "trainer": trainer,
+    }
 
     if logger:
         log.info("Logging hyperparameters!")
@@ -62,22 +72,24 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
             renamed_ckpt[new_k] = v
         model.load_state_dict(renamed_ckpt)
 
-        # Predict
-        predictions = trainer.predict(model=model, datamodule=datamodule, return_predictions=True)
-        predictions = torch.cat(predictions, axis=0)
+        # Run on validation set
+        trainer.validate(model=model, datamodule=datamodule)
+        metric_dict = trainer.callback_metrics
 
-        # Save predictions
+        # Save metrics
         rel_ckpt_dir = rel_ckpt_path.split(os.sep)[:-2]  # Strip '/checkpoints/<checkpoint name>'
-        prediction_subdir = os.path.join(cfg.paths.prediction_dir, *rel_ckpt_dir)
+        prediction_subdir = os.path.join(cfg.paths.prediction_dir, "valid", *rel_ckpt_dir)
         os.makedirs(prediction_subdir, exist_ok=True)
-        prediction_path = os.path.join(prediction_subdir, "predictions.pt")
-        torch.save(predictions, prediction_path)
+        prediction_path = os.path.join(prediction_subdir, "metrics.txt")
+        with open(prediction_path, 'w') as f:
+            for k, v in metric_dict.items():
+                f.write(f"{k}: {v}\n")
 
         # Send to evaluation server
         experiment_name = rel_ckpt_path.split(os.sep)[0]
         emissions_path = os.path.join(cfg.paths.codecarbon_dir, *rel_ckpt_dir, "emissions.csv")
-        dest_dir = f"172.22.11.44::eval_server/{cfg.team_name}/{experiment_name}/"
-        subprocess.call(["rsync", "-avz", "--mkpath", prediction_path, f"{dest_dir}predictions.pt"])
+        dest_dir = f"172.22.11.44::eval_server/valid/{cfg.team_name}/{experiment_name}/"
+        subprocess.call(["rsync", "-avz", "--mkpath", prediction_path, f"{dest_dir}metrics.txt"])
         subprocess.call(["rsync", "-avz", "--mkpath", emissions_path, f"{dest_dir}emissions.csv"])
 
     metric_dict = trainer.callback_metrics
