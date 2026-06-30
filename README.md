@@ -170,3 +170,25 @@ This will register the output of the model for each image in the test set and up
 **IMPORTANT**: For the upload to work, your machine needs to be on the lab network. If you trained elsewhere, copy your checkpoints to a lab server and run the script there.
 
 We will reveal the test performance after everyone has submitted their results!
+
+
+## Development
+To contribute to this project, please ensure you have `uv` installed.
+
+1. Install dependencies and pre-commit hooks:
+
+   ```bash
+   uv sync
+   uv run pre-commit install
+   ```
+
+2. Run checks manually (optional):
+
+   ```bash
+   uv run ruff check --fix
+   uv run ruff format
+   ```
+
+3. Automatic ruff check in vscode:
+
+    There is also a [vscode config](./.vscode/settings.json) to help you automatically run ruff on `ctrl+s`. You should install the [ruff extension](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff) for this to work automatically in vscode.

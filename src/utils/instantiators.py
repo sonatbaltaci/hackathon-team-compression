@@ -1,18 +1,17 @@
 import os
-from typing import Dict, List
 
 import hydra
-from codecarbon import EmissionsTracker
 from lightning import Callback
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
+from codecarbon import EmissionsTracker
 from src.utils import pylogger
 
 log = pylogger.RankedLogger(__name__, rank_zero_only=True)
 
 
-def instantiate_callbacks(callbacks_cfg: DictConfig) -> Dict[str, Callback]:
+def instantiate_callbacks(callbacks_cfg: DictConfig) -> dict[str, Callback]:
     """Instantiates callbacks from config.
 
     Note: does not allow duplicate callback types!
@@ -20,7 +19,7 @@ def instantiate_callbacks(callbacks_cfg: DictConfig) -> Dict[str, Callback]:
     :param callbacks_cfg: A DictConfig object containing callback configurations.
     :return: A dict of instantiated callbacks, indexed by callback class name.
     """
-    callbacks: Dict[str, Callback] = {}
+    callbacks: dict[str, Callback] = {}
 
     if not callbacks_cfg:
         log.warning("No callback configs found! Skipping..")
@@ -29,7 +28,7 @@ def instantiate_callbacks(callbacks_cfg: DictConfig) -> Dict[str, Callback]:
     if not isinstance(callbacks_cfg, DictConfig):
         raise TypeError("Callbacks config must be a DictConfig!")
 
-    for _, cb_conf in callbacks_cfg.items():
+    for cb_conf in callbacks_cfg.values():
         if isinstance(cb_conf, DictConfig) and "_target_" in cb_conf:
             log.info(f"Instantiating callback <{cb_conf._target_}>")
             cb_name = cb_conf._target_.split(".")[-1]
@@ -38,13 +37,13 @@ def instantiate_callbacks(callbacks_cfg: DictConfig) -> Dict[str, Callback]:
     return callbacks
 
 
-def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
+def instantiate_loggers(logger_cfg: DictConfig) -> list[Logger]:
     """Instantiates loggers from config.
 
     :param logger_cfg: A DictConfig object containing logger configurations.
     :return: A list of instantiated loggers.
     """
-    logger: List[Logger] = []
+    logger: list[Logger] = []
 
     if not logger_cfg:
         log.warning("No logger configs found! Skipping...")
@@ -53,7 +52,7 @@ def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
     if not isinstance(logger_cfg, DictConfig):
         raise TypeError("Logger config must be a DictConfig!")
 
-    for _, lg_conf in logger_cfg.items():
+    for lg_conf in logger_cfg.values():
         if isinstance(lg_conf, DictConfig) and "_target_" in lg_conf:
             log.info(f"Instantiating logger <{lg_conf._target_}>")
             logger.append(hydra.utils.instantiate(lg_conf))
@@ -62,7 +61,6 @@ def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
 
 
 def instantiate_emissions_tracker(cfg: DictConfig) -> EmissionsTracker:
-
     os.makedirs(cfg.codecarbon.output_dir, exist_ok=True)
 
     electricitymaps_api_key = None

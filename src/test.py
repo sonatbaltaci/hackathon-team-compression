@@ -1,29 +1,25 @@
 import os
 import subprocess
-from typing import Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 import hydra
 import rootutils
 import torch
-from lightning import LightningDataModule, LightningModule, Trainer
-from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.utils import (
-    RankedLogger,
-    extras,
-    instantiate_loggers,
-    log_hyperparameters,
-    task_wrapper,
-)
+from src.utils import RankedLogger, extras, instantiate_loggers, log_hyperparameters, task_wrapper  # noqa: E402
+
+if TYPE_CHECKING:
+    from lightning import LightningDataModule, LightningModule, Trainer
+    from lightning.pytorch.loggers import Logger
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
 @task_wrapper
-def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Produces test set predictions with the defined checkpoints and sends them
     to an evaluation server.
 
@@ -33,7 +29,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     :param cfg: DictConfig configuration composed by Hydra.
     :return: Tuple[dict, dict] with metrics and dict with all instantiated objects.
     """
-    assert cfg.checkpoints
+    assert cfg.checkpoints  # noqa: S101
 
     log.info(f"Instantiating datamodule <{cfg.datamodule._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.datamodule)
@@ -42,18 +38,12 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     model: LightningModule = hydra.utils.instantiate(cfg.module)
 
     log.info("Instantiating loggers...")
-    logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
+    logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, logger=logger)
 
-    object_dict = {
-        "cfg": cfg,
-        "datamodule": datamodule,
-        "model": model,
-        "logger": logger,
-        "trainer": trainer,
-    }
+    object_dict = {"cfg": cfg, "datamodule": datamodule, "model": model, "logger": logger, "trainer": trainer}
 
     if logger:
         log.info("Logging hyperparameters!")
