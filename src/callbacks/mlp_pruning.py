@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, override
 
@@ -7,6 +8,7 @@ from lightning import Callback, Trainer
 from lightning.pytorch.core.module import LightningModule
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.utilities.exceptions import MisconfigurationException
+from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torch import nn
 
 from src.modules.nets.vision_transformer import EncoderBlock, MLPBlock, VisionTransformer
@@ -98,24 +100,31 @@ def rebind_optimizers(trainer: Trainer, pl_module: LightningModule) -> None:
             scheduler.optimizer = new_optimizer
 
 
+def _is_number_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+
+
 def build_prune_amount_schedule(
     prune_at_steps: list[int], mlp_prune_amount: float | list[float], mlp_prune_amount_increment: float | None = None
 ) -> dict[int, float]:
     """Map each prune step to the fraction of MLP hidden units removed at that step."""
-    if isinstance(mlp_prune_amount, list):
-        if len(mlp_prune_amount) != len(prune_at_steps):
+    steps = [int(step) for step in prune_at_steps]
+
+    if _is_number_sequence(mlp_prune_amount):
+        amounts = [float(amount) for amount in mlp_prune_amount]
+        if len(amounts) != len(steps):
             raise MisconfigurationException(
                 "When `mlp_prune_amount` is a list it must have the same length as "
-                f"`prune_at_steps` ({len(prune_at_steps)}), got {len(mlp_prune_amount)}."
+                f"`prune_at_steps` ({len(steps)}), got {len(amounts)}."
             )
-        return dict(zip(prune_at_steps, mlp_prune_amount, strict=True))
+        return dict(zip(steps, amounts, strict=True))
 
+    amount = float(mlp_prune_amount)
     if mlp_prune_amount_increment is not None:
-        return {
-            step: mlp_prune_amount + index * mlp_prune_amount_increment for index, step in enumerate(prune_at_steps)
-        }
+        increment = float(mlp_prune_amount_increment)
+        return {step: amount + index * increment for index, step in enumerate(steps)}
 
-    return dict.fromkeys(prune_at_steps, mlp_prune_amount)
+    return dict.fromkeys(steps, amount)
 
 
 class ViTProgressiveMLPPruning(Callback):
@@ -152,6 +161,8 @@ class ViTProgressiveMLPPruning(Callback):
     ) -> None:
         if isinstance(prune_at_steps, int):
             prune_at_steps = [prune_at_steps]
+        elif _is_number_sequence(prune_at_steps):
+            prune_at_steps = [int(step) for step in prune_at_steps]
         self._prune_at_steps = sorted(prune_at_steps)
         self._amount_by_step = build_prune_amount_schedule(
             self._prune_at_steps, mlp_prune_amount, mlp_prune_amount_increment
@@ -175,7 +186,9 @@ class ViTProgressiveMLPPruning(Callback):
         return None
 
     @override
-    def on_train_batch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+    def on_train_batch_end(
+        self, trainer: Trainer, pl_module: LightningModule, outputs: STEP_OUTPUT, batch: Any, batch_idx: int
+    ) -> None:
         step = trainer.global_step
         if self._save_step_checkpoints_every_n and step > 0 and step % self._save_step_checkpoints_every_n == 0:
             self._save_step_checkpoint(trainer, step)
