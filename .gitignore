@@ -16,6 +16,7 @@ uv.lock
 credentials.json
 electricity_maps_key.txt
 data/*
+data_v2/*
 logs/*
 codecarbon/*
 predictions/*

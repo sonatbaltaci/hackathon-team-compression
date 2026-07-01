@@ -1,0 +1,12 @@
+# @package _global_
+
+module:
+  net:
+    pooling_layer_index: 3
+    num_queries: 64
+
+# Remember to define experiment_name and tags in all your experiments!
+# First tag options: data, explore, baseline, ablate, hyperparam, final, <custom tag>
+# Second tag options: train, pre-train, post-train, debug, <custom tag>
+experiment_name: "perceiver"
+tags: ["explore", "train"]
