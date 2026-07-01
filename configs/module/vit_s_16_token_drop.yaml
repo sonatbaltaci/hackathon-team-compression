@@ -36,6 +36,7 @@ net:
     drop_ratio: 0.25
     drop_type: random # random, fixed
     activate_after_n_layers: 2
+    every_n_layers: 1
   token_aggregate:
     _target_: src.modules.nets.simple_drop.token_aggregate
     _partial_: true

@@ -1,7 +1,7 @@
 """Token dropping logic.
 
-At every layer it drops a fraction of patch tokens, either randomly or at
-fixed evenly-spaced positions.
+At configured layers it drops a fraction of patch tokens, either randomly or
+at fixed evenly-spaced positions.
 Optionally, it aggregates these into a register token.
 """
 
@@ -19,6 +19,7 @@ def token_select(
     drop_ratio: float = 0.5,
     drop_type: Literal["random", "fixed"] = "random",
     activate_after_n_layers: int = 0,
+    every_n_layers: int = 1,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor] | None]:
     """Select patch tokens to keep and patch tokens to merge into registers.
 
@@ -35,6 +36,8 @@ def token_select(
             fixed evenly-spaced positions. Default: "random".
         activate_after_n_layers (int, optional): Number of initial layers to skip before
             dropping begins. Default: 0.
+        every_n_layers (int, optional): Drop tokens once every N layers after activation.
+            Default: 1.
 
     Returns:
         tuple[list[torch.Tensor], list[torch.Tensor] | None]: Kept patch-token indices and dropped patch-token indices
@@ -42,7 +45,14 @@ def token_select(
     """
     num_patches = patch_tokens.shape[1]
 
-    if current_layer < activate_after_n_layers:
+    if every_n_layers < 1:
+        msg = f"every_n_layers must be >= 1, got {every_n_layers}."
+        raise ValueError(msg)
+
+    should_drop = (
+        current_layer >= activate_after_n_layers and (current_layer - activate_after_n_layers) % every_n_layers == 0
+    )
+    if not should_drop:
         all_idcs = torch.arange(num_patches, device=patch_tokens.device)
         if register_tokens is None:
             return [all_idcs], None
