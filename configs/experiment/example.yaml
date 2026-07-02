@@ -27,5 +27,5 @@ defaults:
 # First tag options: data, explore, baseline, ablate, hyperparam, final, <custom tag>
 # Second tag options: train, pre-train, post-train, debug, <custom tag>
 # experiment_name: "example"
-experiment_name: "vit_s16_mod_2on_1off_keep0.25"
+experiment_name: "vit_s16_mod_layer_odd_keep0.25"
 tags: ["explore", "train"]
